@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Clean white background with smooth rounded corners -->
+  <rect width="512" height="512" fill="#FFFFFF" rx="80" />
+  
+  <!-- Large bold sans-serif capital letter 'A' in vibrant blue -->
+  <text 
+    x="50%" 
+    y="53%" 
+    font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" 
+    font-size="360" 
+    font-weight="900" 
+    fill="#1D4ED8" 
+    text-anchor="middle" 
+    dominant-baseline="central"
+  >A</text>
+</svg>

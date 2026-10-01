@@ -1,0 +1,8 @@
+{
+  "name": "Control de Asistencia",
+  "description": "Herramienta offline-first de toma de asistencia escolar diaria, estadísticas en tiempo real, respaldo JSON y reportes por WhatsApp",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
