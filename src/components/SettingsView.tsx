@@ -3,7 +3,6 @@ import {
   Download,
   Upload,
   Database,
-  FileCode,
   CheckCircle,
   AlertTriangle,
   RotateCcw,
@@ -112,168 +111,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       showFeedback('error', 'Error al restablecer datos: ' + (err as Error).message);
     }
     setIsResetDataModalOpen(false);
-  };
-
-  // Generate self-contained standalone HTML bundle with Dark/Light mode toggle
-  const handleDownloadStandaloneHTML = () => {
-    const currentInstName = tempInstitutionName.trim() || config.nombreInstitucion || 'Escuela / Instituto';
-    const htmlBundle = `<!DOCTYPE html>
-<html lang="es" class="${theme}">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Control de Asistencia - ${currentInstName}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class'
-    }
-  </script>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <style>
-    body { font-family: system-ui, -apple-system, sans-serif; }
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
-    .dark ::-webkit-scrollbar-thumb { background: #262d3a; }
-  </style>
-</head>
-<body class="bg-slate-100 dark:bg-[#0e1014] text-slate-900 dark:text-slate-100 min-h-screen transition-colors">
-  <div id="root"></div>
-  <script type="text/babel">
-    const { useState, useEffect } = React;
-
-    function StandaloneApp() {
-      const [isDark, setIsDark] = useState(${theme === 'dark'});
-      const [currentDate, setCurrentDate] = useState(() => {
-        const now = new Date();
-        return now.toISOString().split('T')[0];
-      });
-      const [courses, setCourses] = useState(${JSON.stringify(courses)});
-      const [students, setStudents] = useState(${JSON.stringify(students)});
-      const [attendance, setAttendance] = useState(${JSON.stringify(attendanceMap)});
-      const [selectedCourseId, setSelectedCourseId] = useState(courses[0]?.id || '');
-      const institutionName = ${JSON.stringify(currentInstName)};
-
-      useEffect(() => {
-        if (isDark) {
-          document.documentElement.classList.add('dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-        }
-      }, [isDark]);
-
-      const currentCourse = courses.find(c => c.id === selectedCourseId) || courses[0];
-      const courseStudents = students.filter(s => s.courseId === currentCourse?.id);
-      const recordKey = currentCourse ? currentCourse.id + '_' + currentDate : '';
-      const dayRecord = attendance[recordKey] || {};
-
-      const updateStatus = (studentId, status) => {
-        setAttendance(prev => ({
-          ...prev,
-          [recordKey]: {
-            ...prev[recordKey],
-            [studentId]: { status, observation: prev[recordKey]?.[studentId]?.observation || '' }
-          }
-        }));
-      };
-
-      const markAll = (status) => {
-        const updates = {};
-        courseStudents.forEach(s => { updates[s.id] = { status }; });
-        setAttendance(prev => ({ ...prev, [recordKey]: updates }));
-      };
-
-      const pCount = courseStudents.filter(s => dayRecord[s.id]?.status === 'P').length;
-      const aCount = courseStudents.filter(s => dayRecord[s.id]?.status === 'A').length;
-      const tCount = courseStudents.filter(s => dayRecord[s.id]?.status === 'T').length;
-      const jCount = courseStudents.filter(s => dayRecord[s.id]?.status === 'J').length;
-
-      return (
-        <div className="max-w-2xl mx-auto p-4 space-y-4">
-          <header className="flex items-center justify-between p-3 bg-white dark:bg-[#151820] border border-slate-200 dark:border-[#262d3a] rounded-2xl shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center font-black text-white text-lg">
-                A
-              </div>
-              <div>
-                <h1 className="font-bold text-sm text-slate-900 dark:text-white">{institutionName}</h1>
-                <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">Asistencia Escolar · Versión Autónoma Offline</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setIsDark(!isDark)}
-              className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-amber-400 border border-slate-200 dark:border-slate-700 text-xs font-bold"
-            >
-              {isDark ? '☀️ Modo Claro' : '🌙 Modo Oscuro'}
-            </button>
-          </header>
-
-          <div className="bg-white dark:bg-[#151820] border border-slate-200 dark:border-[#262d3a] rounded-2xl p-4 space-y-3 shadow-sm">
-            <div className="flex justify-between items-center">
-              <input type="date" value={currentDate} onChange={e => setCurrentDate(e.target.value)} className="bg-slate-50 dark:bg-[#0e1116] border border-slate-300 dark:border-slate-700 px-3 py-1.5 rounded-xl text-xs text-slate-900 dark:text-white" />
-              <div className="flex gap-2 overflow-x-auto">
-                {courses.map(c => (
-                  <button key={c.id} onClick={() => setSelectedCourseId(c.id)} className={"px-3 py-1 rounded-xl text-xs font-bold " + (c.id === currentCourse?.id ? "bg-amber-500 text-black shadow" : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-white")}>
-                    {c.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-4 gap-2 text-center text-xs">
-              <div className="bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-xl border border-emerald-200 dark:border-emerald-800/40"><span className="text-emerald-700 dark:text-emerald-400 font-bold block">P: {pCount}</span></div>
-              <div className="bg-rose-50 dark:bg-rose-950/40 p-2 rounded-xl border border-rose-200 dark:border-rose-800/40"><span className="text-rose-700 dark:text-rose-400 font-bold block">A: {aCount}</span></div>
-              <div className="bg-amber-50 dark:bg-amber-950/40 p-2 rounded-xl border border-amber-200 dark:border-amber-800/40"><span className="text-amber-700 dark:text-amber-400 font-bold block">T: {tCount}</span></div>
-              <div className="bg-indigo-50 dark:bg-indigo-950/40 p-2 rounded-xl border border-indigo-200 dark:border-indigo-800/40"><span className="text-indigo-700 dark:text-indigo-400 font-bold block">J: {jCount}</span></div>
-            </div>
-
-            <div className="flex gap-2">
-              <button onClick={() => markAll('P')} className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white">Todos Presente</button>
-              <button onClick={() => markAll('A')} className="flex-1 py-2 bg-rose-600 hover:bg-rose-500 rounded-xl text-xs font-bold text-white">Todos Ausente</button>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            {courseStudents.map((s, idx) => {
-              const st = dayRecord[s.id]?.status;
-              return (
-                <div key={s.id} className="flex items-center justify-between p-3 bg-white dark:bg-[#151820] border border-slate-200 dark:border-[#262d3a] rounded-xl shadow-xs">
-                  <div className="text-xs">
-                    <span className="text-amber-700 dark:text-amber-400 font-bold mr-2">{idx + 1}</span>
-                    <strong className="text-slate-900 dark:text-white uppercase">{s.lastName}</strong>, {s.firstName}
-                  </div>
-                  <div className="flex gap-1 font-bold text-xs">
-                    {['P', 'A', 'T', 'J'].map(btn => (
-                      <button key={btn} onClick={() => updateStatus(s.id, btn)} className={"w-8 h-8 rounded-lg " + (st === btn ? "bg-amber-400 text-black ring-2 ring-amber-500" : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300")}>
-                        {btn}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      );
-    }
-
-    ReactDOM.render(<StandaloneApp />, document.getElementById('root'));
-  </script>
-</body>
-</html>`;
-
-    const blob = new Blob([htmlBundle], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'Control_Asistencia_Offline_Autonoma.html';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showFeedback('success', '¡Archivo HTML autónomo descargado exitosamente!');
   };
 
   const totalRegisteredEntries = Object.keys(attendanceMap).length;
@@ -453,31 +290,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <p className="text-[10.5px] text-slate-500 dark:text-slate-400 leading-relaxed italic">
           * Todo el sistema funciona en modo 100% Offline-First. Todos los datos se resguardan de manera local y privada en la memoria de este navegador. Puedes exportar el archivo JSON para resguardar tus datos o transferirlos a cualquier otro dispositivo sin depender de servidores o la nube.
         </p>
-      </div>
-
-      {/* Standalone Single-File HTML Export */}
-      <div className="bg-white dark:bg-[#151820] border border-slate-200 dark:border-[#262d3a] rounded-2xl p-4 shadow-sm dark:shadow-md space-y-3 transition-colors">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 flex items-center justify-center">
-            <FileCode className="w-4 h-4" />
-          </div>
-          <div>
-            <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-              Generar Archivo .HTML Autónomo
-            </h3>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Descarga un único archivo .html listo para abrir con doble clic en cualquier computadora o celular sin internet
-            </p>
-          </div>
-        </div>
-
-        <button
-          onClick={handleDownloadStandaloneHTML}
-          className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-cyan-50 hover:bg-cyan-100 dark:bg-[#1a222f] dark:hover:bg-[#202b3c] border border-cyan-300 dark:border-cyan-500/30 text-cyan-800 dark:text-cyan-300 font-bold text-xs transition active:scale-98 shadow-xs"
-        >
-          <Download className="w-4 h-4" />
-          <span>Descargar Código Completo en 1 Archivo .HTML</span>
-        </button>
       </div>
 
       {/* Danger Zone: Factory Reset */}
