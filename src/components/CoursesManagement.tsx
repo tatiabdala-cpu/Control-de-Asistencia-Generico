@@ -1,4 +1,5 @@
 import React, { useState, useRef, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 import {
   Plus,
   Users,
@@ -317,7 +318,7 @@ export const CoursesManagement: React.FC<CoursesManagementProps> = ({
     }
   };
 
-  // Intelligent text parser: Extracts list number, clean DNI (7-8 digits with/without dots or prefix), and clean name
+  // Intelligent text parser: Extracts list number, clean DNI (numbers only, stripping dots/spaces/prefix), and clean name
   const parseBulkText = (text: string, currentGender?: StudentGender) => {
     const genderToApply = currentGender !== undefined ? currentGender : bulkBatchGender;
     const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
@@ -337,15 +338,16 @@ export const CoursesManagement: React.FC<CoursesManagementProps> = ({
       let extractedDni: string | undefined = undefined;
       let cleanedFullName = line;
 
-      // Check if line contains tab characters (e.g. copied from Excel columns)
-      if (line.includes('\t')) {
-        const parts = line.split('\t').map(p => p.trim()).filter(Boolean);
+      // Check if line contains tab or semicolon characters (e.g. copied from Excel columns or CSV file)
+      if (line.includes('\t') || line.includes(';')) {
+        const delimiter = line.includes('\t') ? '\t' : ';';
+        const parts = line.split(delimiter).map(p => p.trim()).filter(Boolean);
         // Find if one of the parts is a DNI
         let dniColIdx = -1;
         for (let i = 0; i < parts.length; i++) {
           const col = parts[i];
-          const candidate = col.replace(/^(?:D\.?N\.?I\.?\:?\s*)/i, '').replace(/[\.\s]/g, '');
-          if (/^\d{7,8}$/.test(candidate)) {
+          const candidate = col.replace(/^(?:D\.?N\.?I\.?\:?\s*)/i, '').replace(/[\.\s\-]/g, '');
+          if (/^\d{6,9}$/.test(candidate)) {
             extractedDni = candidate;
             dniColIdx = i;
             break;
@@ -372,26 +374,25 @@ export const CoursesManagement: React.FC<CoursesManagementProps> = ({
 
       // b & c) Extraer el DNI buscando cualquiera de los siguientes patrones:
       // - Prefijos: "DNI:", "DNI", "D.N.I.", "D.N.I.:" seguido de números (con o sin puntos)
-      // - Secuencias numéricas de 7 u 8 dígitos (ej: 12.345.678 o 12345678)
+      // - Secuencias numéricas de 6 a 9 dígitos (ej: 12.345.678 o 12345678)
       if (!extractedDni) {
         // Pattern 1: DNI at end of line (with or without prefix DNI, with or without dots)
-        // Matches e.g. " - DNI: 42.123.456", " 41987654", " - D.N.I. 40.555.666", ", DNI 44111222"
-        const endDniPattern = /(?:[\s\-,\–\/\|\(\[]+)?(?:\b(?:D\.?N\.?I\.?\:?)\s*)?(\d{1,2}(?:\.\d{3}){2}|\d{7,8})\b[\)\]]?\s*$/i;
+        const endDniPattern = /(?:[\s\-,\–\/\|\(\[]+)?(?:\b(?:D\.?N\.?I\.?\:?)\s*)?(\d{1,2}(?:\.\d{3}){2}|\d{6,9})\b[\)\]]?\s*$/i;
         const match = cleanedFullName.match(endDniPattern);
 
         if (match && match[1]) {
           const cleanDigits = match[1].replace(/\D/g, '');
-          if (cleanDigits.length >= 7 && cleanDigits.length <= 8) {
+          if (cleanDigits.length >= 6 && cleanDigits.length <= 9) {
             extractedDni = cleanDigits;
             cleanedFullName = cleanedFullName.slice(0, match.index).replace(/[\s\-,\–\/\|\(\[]+$/, '').trim();
           }
         } else {
           // Pattern 2: DNI with explicit prefix anywhere in the line: e.g. "DNI: 42.123.456"
-          const explicitPattern = /\b(?:D\.?N\.?I\.?\:?\s*)(\d{1,2}(?:\.\d{3}){2}|\d{7,8})\b/i;
+          const explicitPattern = /\b(?:D\.?N\.?I\.?\:?\s*)(\d{1,2}(?:\.\d{3}){2}|\d{6,9})\b/i;
           const expMatch = cleanedFullName.match(explicitPattern);
           if (expMatch && expMatch[1]) {
             const cleanDigits = expMatch[1].replace(/\D/g, '');
-            if (cleanDigits.length >= 7 && cleanDigits.length <= 8) {
+            if (cleanDigits.length >= 6 && cleanDigits.length <= 9) {
               extractedDni = cleanDigits;
               cleanedFullName = (
                 cleanedFullName.slice(0, expMatch.index) +
@@ -446,17 +447,300 @@ export const CoursesManagement: React.FC<CoursesManagementProps> = ({
     setBulkPreview(parsed);
   };
 
+  // Helper to process Excel spreadsheets (.xlsx, .xls)
+  const processExcelWorkbook = (
+    workbook: XLSX.WorkBook,
+    defaultGender: StudentGender
+  ): {
+    students: {
+      lastName: string;
+      firstName: string;
+      dni?: string;
+      listNumber?: number;
+      genero: StudentGender;
+    }[];
+    textRepresentation: string;
+  } => {
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) return { students: [], textRepresentation: '' };
+
+    const worksheet = workbook.Sheets[sheetName];
+    const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as unknown[][];
+
+    // Helper to clean DNI: keeps only digits (6 to 9 digits), stripping points, spaces, and prefixes
+    const cleanDni = (val: unknown): string | undefined => {
+      if (val === null || val === undefined) return undefined;
+      const str = String(val).trim();
+      if (!str) return undefined;
+      const digits = str.replace(/\D/g, '');
+      if (digits.length >= 6 && digits.length <= 9) {
+        return digits;
+      }
+      return undefined;
+    };
+
+    // Filter out rows where all cells are empty
+    const rows = rawRows.filter(
+      row => Array.isArray(row) && row.some(cell => String(cell ?? '').trim().length > 0)
+    );
+
+    if (rows.length === 0) return { students: [], textRepresentation: '' };
+
+    // Inspect header row candidates in the first few rows
+    let headerRowIdx = -1;
+    let dniColIdx = -1;
+    let lastNameColIdx = -1;
+    let firstNameColIdx = -1;
+    let fullNameColIdx = -1;
+    let listNumColIdx = -1;
+    let genderColIdx = -1;
+
+    for (let r = 0; r < Math.min(5, rows.length); r++) {
+      const rowStr = rows[r].map(c => String(c ?? '').toLowerCase().trim());
+      const hasDni = rowStr.some(c => /\b(dni|documento|doc\.?|nro\.?\s*doc|identidad)\b/i.test(c));
+      const hasName = rowStr.some(c => /\b(apellido|nombre|alumno|estudiante)\b/i.test(c));
+      if (hasDni || hasName) {
+        headerRowIdx = r;
+        rowStr.forEach((cellText, colIdx) => {
+          if (/\b(dni|documento|doc\.?|nro\.?\s*doc|identidad)\b/i.test(cellText)) {
+            dniColIdx = colIdx;
+          } else if (/\bapellido\s*y\s*nombre\b|\bnombre\s*y\s*apellido\b|\balumno\b|\bestudiante\b/i.test(cellText)) {
+            fullNameColIdx = colIdx;
+          } else if (/\bapellido(s)?\b/i.test(cellText)) {
+            lastNameColIdx = colIdx;
+          } else if (/\bnombre(s)?\b/i.test(cellText)) {
+            firstNameColIdx = colIdx;
+          } else if (/^(n°|nro|nro\.|#|orden|pos|lista|item)$/i.test(cellText)) {
+            listNumColIdx = colIdx;
+          } else if (/\b(sexo|género|genero)\b/i.test(cellText)) {
+            genderColIdx = colIdx;
+          }
+        });
+        break;
+      }
+    }
+
+    const startRow = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
+    const parsedStudents: {
+      lastName: string;
+      firstName: string;
+      dni?: string;
+      listNumber?: number;
+      genero: StudentGender;
+    }[] = [];
+
+    for (let r = startRow; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row.some(c => String(c ?? '').trim().length > 0)) continue;
+
+      let extractedDni: string | undefined = undefined;
+      let foundDniCol = -1;
+
+      // 1. Extraer y limpiar DNI
+      if (dniColIdx !== -1 && row[dniColIdx] !== undefined) {
+        extractedDni = cleanDni(row[dniColIdx]);
+        if (extractedDni) {
+          foundDniCol = dniColIdx;
+        }
+      }
+
+      // Si no se encontró en la columna de DNI, buscar prefijo explícito en cualquier celda
+      if (!extractedDni) {
+        for (let c = 0; c < row.length; c++) {
+          const cellStr = String(row[c] ?? '').trim();
+          const match = cellStr.match(/\b(?:D\.?N\.?I\.?\:?\s*)(\d{1,2}(?:\.\d{3}){2}|\d{6,9})\b/i);
+          if (match && match[1]) {
+            const digits = match[1].replace(/\D/g, '');
+            if (digits.length >= 6 && digits.length <= 9) {
+              extractedDni = digits;
+              foundDniCol = c;
+              break;
+            }
+          }
+        }
+      }
+
+      // Si aún no se encontró, buscar cualquier celda numérica o de 6 a 9 dígitos
+      if (!extractedDni) {
+        for (let c = 0; c < row.length; c++) {
+          if (c === listNumColIdx) continue;
+          const candidate = cleanDni(row[c]);
+          if (candidate) {
+            const numVal = Number(candidate);
+            // Ignorar números pequeños de primera columna (ej: número de orden 1, 2, 3)
+            if (c === 0 && candidate.length <= 3 && numVal < 200) {
+              continue;
+            }
+            extractedDni = candidate;
+            foundDniCol = c;
+            break;
+          }
+        }
+      }
+
+      // 2. Extraer Nombre y Apellido
+      let lastName = '';
+      let firstName = '';
+
+      if (lastNameColIdx !== -1 && firstNameColIdx !== -1) {
+        lastName = String(row[lastNameColIdx] ?? '').trim();
+        firstName = String(row[firstNameColIdx] ?? '').trim();
+      } else if (fullNameColIdx !== -1) {
+        const rawFullName = String(row[fullNameColIdx] ?? '').trim();
+        const cleaned = rawFullName
+          .replace(/\b(?:D\.?N\.?I\.?\:?\s*)?(\d{1,2}(?:\.\d{3}){2}|\d{6,9})\b/gi, '')
+          .replace(/^[\s\-,\–\:\/\|\(\[]+|[\s\-,\–\:\/\|\)\]]+$/g, '')
+          .trim();
+
+        if (cleaned.includes(',')) {
+          const parts = cleaned.split(',');
+          lastName = parts[0].trim();
+          firstName = parts.slice(1).join(',').trim();
+        } else {
+          const words = cleaned.split(/\s+/).filter(Boolean);
+          if (words.length >= 2) {
+            lastName = words.slice(0, -1).join(' ');
+            firstName = words[words.length - 1];
+          } else if (words.length === 1) {
+            lastName = words[0];
+            firstName = '';
+          }
+        }
+      } else {
+        // Sin columnas identificadas por encabezado: recolectar celdas de texto
+        const textCells: string[] = [];
+        row.forEach((cellVal, colIdx) => {
+          if (colIdx === dniColIdx || colIdx === foundDniCol) return;
+          if (colIdx === listNumColIdx) return;
+          if (colIdx === genderColIdx) return;
+
+          const valStr = String(cellVal ?? '').trim();
+          if (!valStr) return;
+
+          // Ignorar número de lista en columna 0
+          if (colIdx === 0 && /^\d{1,3}$/.test(valStr)) return;
+
+          textCells.push(valStr);
+        });
+
+        if (textCells.length >= 2) {
+          lastName = textCells[0].trim();
+          firstName = textCells.slice(1).join(' ').trim();
+        } else if (textCells.length === 1) {
+          const cleaned = textCells[0]
+            .replace(/\b(?:D\.?N\.?I\.?\:?\s*)?(\d{1,2}(?:\.\d{3}){2}|\d{6,9})\b/gi, '')
+            .replace(/^[\s\-,\–\:\/\|\(\[]+|[\s\-,\–\:\/\|\)\]]+$/g, '')
+            .trim();
+
+          if (cleaned.includes(',')) {
+            const parts = cleaned.split(',');
+            lastName = parts[0].trim();
+            firstName = parts.slice(1).join(',').trim();
+          } else {
+            const words = cleaned.split(/\s+/).filter(Boolean);
+            if (words.length >= 2) {
+              lastName = words.slice(0, -1).join(' ');
+              firstName = words[words.length - 1];
+            } else if (words.length === 1) {
+              lastName = words[0];
+              firstName = '';
+            }
+          }
+        }
+      }
+
+      // Limpiar puntuación residual
+      lastName = lastName.replace(/^[\s\-,\–]+|[\s\-,\–]+$/g, '').trim();
+      firstName = firstName.replace(/^[\s\-,\–]+|[\s\-,\–]+$/g, '').trim();
+
+      if (!lastName && !firstName) continue;
+      if (!lastName && firstName) {
+        lastName = firstName;
+        firstName = '';
+      }
+
+      // 3. Extraer Número de Lista
+      let listNumber = parsedStudents.length + 1;
+      if (listNumColIdx !== -1 && row[listNumColIdx] !== undefined) {
+        const parsedNum = parseInt(String(row[listNumColIdx]).replace(/\D/g, ''), 10);
+        if (!isNaN(parsedNum) && parsedNum > 0) {
+          listNumber = parsedNum;
+        }
+      } else if (row[0] !== undefined) {
+        const firstColStr = String(row[0]).trim();
+        if (/^\d{1,3}$/.test(firstColStr)) {
+          const parsedNum = parseInt(firstColStr, 10);
+          if (!isNaN(parsedNum) && parsedNum > 0 && parsedNum < 150) {
+            listNumber = parsedNum;
+          }
+        }
+      }
+
+      // 4. Género por fila si está indicado
+      let rowGender: StudentGender = defaultGender;
+      if (genderColIdx !== -1 && row[genderColIdx] !== undefined) {
+        const gStr = String(row[genderColIdx]).toLowerCase().trim();
+        if (gStr === 'v' || gStr === 'varon' || gStr === 'varón' || gStr === 'masculino') {
+          rowGender = 'V';
+        } else if (gStr === 'm' || gStr === 'mujer' || gStr === 'f' || gStr === 'femenino') {
+          rowGender = 'M';
+        }
+      }
+
+      parsedStudents.push({
+        listNumber,
+        lastName,
+        firstName,
+        dni: extractedDni,
+        genero: rowGender,
+      });
+    }
+
+    // Generar representación de texto para sincronizar el textarea
+    const textRepresentation = parsedStudents
+      .map(s => `${s.lastName}${s.firstName ? ', ' + s.firstName : ''}${s.dni ? ' DNI: ' + s.dni : ''}`)
+      .join('\n');
+
+    return { students: parsedStudents, textRepresentation };
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = event => {
-      const content = event.target?.result as string;
-      setBulkText(content);
-      parseBulkText(content, bulkBatchGender);
-    };
-    reader.readAsText(file);
+    const fileName = file.name.toLowerCase();
+    const isExcel =
+      fileName.endsWith('.xlsx') ||
+      fileName.endsWith('.xls') ||
+      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.type === 'application/vnd.ms-excel';
+
+    if (isExcel) {
+      const reader = new FileReader();
+      reader.onload = event => {
+        try {
+          const buffer = event.target?.result as ArrayBuffer;
+          const workbook = XLSX.read(buffer, { type: 'array' });
+          const { students, textRepresentation } = processExcelWorkbook(workbook, bulkBatchGender);
+          setBulkText(textRepresentation);
+          setBulkPreview(students);
+        } catch (err) {
+          console.error('Error al procesar archivo Excel:', err);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      // Archivos estándar de texto .txt o .csv
+      const reader = new FileReader();
+      reader.onload = event => {
+        const content = event.target?.result as string;
+        setBulkText(content);
+        parseBulkText(content, bulkBatchGender);
+      };
+      reader.readAsText(file);
+    }
+
+    e.target.value = '';
   };
 
   const handleSaveBulk = () => {
@@ -1704,14 +1988,14 @@ export const CoursesManagement: React.FC<CoursesManagementProps> = ({
               {/* File upload trigger */}
               <div className="flex items-center justify-between bg-slate-50 dark:bg-[#191e28] p-3 rounded-xl border border-slate-200 dark:border-[#293242]">
                 <div>
-                  <p className="font-bold text-slate-900 dark:text-white">Subir archivo de texto o CSV</p>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Archivos .txt o .csv con el listado</p>
+                  <p className="font-bold text-slate-900 dark:text-white">Subir archivo de texto, CSV o Excel</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Archivos .txt, .csv o .xlsx con el listado</p>
                 </div>
                 <label className="cursor-pointer px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-800 dark:text-amber-400 hover:bg-amber-500/30 border border-amber-400 font-bold text-xs transition">
                   Elegir Archivo
                   <input
                     type="file"
-                    accept=".txt,.csv"
+                    accept=".txt,.csv,.xlsx,.xls"
                     onChange={handleFileUpload}
                     className="hidden"
                   />
